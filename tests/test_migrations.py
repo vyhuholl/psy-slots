@@ -114,3 +114,29 @@ def test_migration_not_invoked_on_webhook_path(
 
     assert response["statusCode"] == 200
     run_spy.assert_not_called()
+
+
+def test_sent_reminders_table_is_migrated() -> None:
+    joined = "\n".join(MIGRATIONS)
+    # Таблица sent_reminders: PK booking_id, sent_at для идемпотентности.
+    assert "sent_reminders" in joined
+    assert "booking_id" in joined
+    assert "sent_at" in joined
+    # Идемпотентность: повторный прогон миграций безопасен.
+    assert all("IF NOT EXISTS" in stmt for stmt in MIGRATIONS)
+
+
+def test_run_migrations_creates_sent_reminders_idempotently() -> None:
+    pool = MagicMock(name="pool")
+
+    run_migrations(pool=pool)
+    run_migrations(pool=pool)
+
+    executed = [
+        call.args[0] for call in pool.execute_with_retries.call_args_list
+    ]
+    assert any(
+        "sent_reminders" in stmt and "booking_id" in stmt for stmt in executed
+    )
+    # Каждый прогон применяет тот же идемпотентный DDL.
+    assert len(executed) == 2 * len(MIGRATIONS)

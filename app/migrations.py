@@ -47,11 +47,26 @@ CREATE TABLE IF NOT EXISTS clients (
 );
 """
 
+# Маркеры отправленных напоминаний: booking_id (PK) гарантирует уникальность,
+# sent_at фиксирует момент отправки. Таблица обеспечивает идемпотентность —
+# одно напоминание на бронь, даже при повторных/перекрывающихся тиках.
+_CREATE_SENT_REMINDERS = """
+CREATE TABLE IF NOT EXISTS sent_reminders (
+    booking_id Utf8,
+    sent_at Timestamp,
+    PRIMARY KEY (booking_id)
+);
+"""
+
 # Идемпотентные DDL-инструкции. Психолог один, а длительность и интервалы
 # доступности берутся из окружения (см. bot-config), поэтому таблиц
 # специалистов и недельного расписания в схеме нет. Прикладные таблицы
 # (sent_reminders) добавляют свои DDL сюда доменные changes.
-MIGRATIONS: tuple[str, ...] = (_CREATE_BOOKINGS, _CREATE_CLIENTS)
+MIGRATIONS: tuple[str, ...] = (
+    _CREATE_BOOKINGS,
+    _CREATE_CLIENTS,
+    _CREATE_SENT_REMINDERS,
+)
 
 
 def run_migrations(
