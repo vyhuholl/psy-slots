@@ -43,39 +43,17 @@ def test_run_migrations_uses_warm_pool_when_omitted(
     pool.execute_with_retries.assert_called_once_with(DDL[0])
 
 
-def test_specialists_table_created_idempotently() -> None:
-    pool = MagicMock(name="pool")
-
-    run_migrations(pool=pool, statements=MIGRATIONS)
-
-    executed = [
-        call.args[0] for call in pool.execute_with_retries.call_args_list
-    ]
-    assert any(
-        "CREATE TABLE IF NOT EXISTS specialists" in stmt for stmt in executed
-    )
-    # Все DDL идемпотентны — повторный прогон не роняет и не дублирует.
-    assert all("IF NOT EXISTS" in stmt for stmt in executed)
-
-    run_migrations(pool=pool, statements=MIGRATIONS)
-    assert pool.execute_with_retries.call_count == 2 * len(MIGRATIONS)
+def test_all_migrations_are_idempotent() -> None:
+    # Каждая зарегистрированная capability добавляет только идемпотентный DDL.
+    assert all("IF NOT EXISTS" in stmt for stmt in MIGRATIONS)
 
 
-def test_availability_intervals_table_created_idempotently() -> None:
-    pool = MagicMock(name="pool")
-
-    run_migrations(pool=pool, statements=MIGRATIONS)
-
-    executed = [
-        call.args[0] for call in pool.execute_with_retries.call_args_list
-    ]
-    assert any(
-        "CREATE TABLE IF NOT EXISTS availability_intervals" in stmt
-        for stmt in executed
-    )
-    # Повторный прогон идемпотентен: те же DDL, без дублей и ошибок.
-    run_migrations(pool=pool, statements=MIGRATIONS)
-    assert pool.execute_with_retries.call_count == 2 * len(MIGRATIONS)
+def test_obsolete_tables_are_not_migrated() -> None:
+    # Психолог один, интервалы — из окружения: таблиц специалистов и
+    # недельного расписания больше нет в схеме.
+    joined = "\n".join(MIGRATIONS)
+    assert "specialists" not in joined
+    assert "availability_intervals" not in joined
 
 
 def test_migration_not_invoked_on_webhook_path(

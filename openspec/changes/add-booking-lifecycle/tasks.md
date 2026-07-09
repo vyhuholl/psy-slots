@@ -1,25 +1,25 @@
 ## 1. Доменная модель брони
 
-- [ ] 1.1 Тест: `Booking` создаётся с id, specialist_id, client_id, start/end в UTC, состоянием `booked`; неизменяем (падающий)
+- [ ] 1.1 Тест: `Booking` создаётся с id, client_id, start/end в UTC, состоянием `booked`; неизменяем (падающий)
 - [ ] 1.2 Тест: `BookingStatus` содержит `booked` и `cancelled`; переход `booked → cancelled` отражается в модели
-- [ ] 1.3 Реализовать `app/domain/booking.py`: frozen `Booking`, `BookingStatus`, доменные ошибки (`SlotOutsideAvailability`, `SlotMisaligned`, `SlotTaken`, `BookingNotFound`)
+- [ ] 1.3 Реализовать `app/domain/booking.py`: frozen `Booking`, `BookingStatus`, доменные ошибки (`SlotNotToday`, `SlotOutsideAvailability`, `SlotMisaligned`, `SlotTaken`, `BookingNotFound`)
 - [ ] 1.4 Зелёные тесты 1.1–1.2
 
 ## 2. Таблица bookings
 
-- [ ] 2.1 Тест: раннер миграций создаёт `bookings` и индекс `(specialist_id, start_utc)`; повторный прогон идемпотентен (падающий, сессия YDB замокана)
-- [ ] 2.2 Добавить `CREATE TABLE IF NOT EXISTS bookings (id, specialist_id, client_id, start_utc, end_utc, status, created_at, cancelled_at)` + вторичный индекс в `app/migrations.py`
+- [ ] 2.1 Тест: раннер миграций создаёт `bookings` и индекс `(start_utc)`; повторный прогон идемпотентен (падающий, сессия YDB замокана)
+- [ ] 2.2 Добавить `CREATE TABLE IF NOT EXISTS bookings (id, client_id, start_utc, end_utc, status, created_at, cancelled_at)` + вторичный индекс в `app/migrations.py`
 - [ ] 2.3 Зелёный тест 2.1
 
 ## 3. Создание брони
 
-- [ ] 3.1 Тест: создание фиксирует UUID, `start` в UTC и денормализованный `end = start + длительность` (падающий, пул/транзакция и сервисы специалиста/доступности замоканы)
-- [ ] 3.2 Тест: изменение длительности специалиста после создания не меняет `end` существующей брони
-- [ ] 3.3 Тест: слот внутри окна и на сетке → бронь создаётся
-- [ ] 3.4 Тест: слот вне интервала доступности → `SlotOutsideAvailability`, не создаётся
-- [ ] 3.5 Тест: слот не кратен длительности или `end` за концом интервала → `SlotMisaligned`, не создаётся
-- [ ] 3.6 Тест: неизвестный специалист → `SpecialistNotFound`, не создаётся
-- [ ] 3.7 Реализовать `create` в `app/services/booking_service.py`: лукап специалиста (длительность+TZ), денормализация end, конвертация UTC→локаль, проверка окна и выравнивания, генерация `uuid4`
+- [ ] 3.1 Тест: создание фиксирует UUID, `start` в UTC и денормализованный `end = start + длительность` из конфигурации (падающий, пул/транзакция и конфиг замоканы)
+- [ ] 3.2 Тест: изменение длительности в конфигурации после создания не меняет `end` существующей брони
+- [ ] 3.3 Тест: слот сегодня, внутри окна и на сетке → бронь создаётся
+- [ ] 3.4 Тест: слот не на сегодня (другой день / прошедшее время) → `SlotNotToday`, не создаётся
+- [ ] 3.5 Тест: слот вне интервала доступности → `SlotOutsideAvailability`, не создаётся
+- [ ] 3.6 Тест: слот не кратен длительности или `end` за концом интервала → `SlotMisaligned`, не создаётся
+- [ ] 3.7 Реализовать `create` в `app/services/booking_service.py`: чтение длительности/TZ/интервалов из конфигурации, денормализация end, конвертация UTC→локаль, проверка «сегодня»/окна/выравнивания, генерация `uuid4`
 - [ ] 3.8 Зелёные тесты 3.1–3.6
 
 ## 4. Запрет двойного бронирования (race-safe)
@@ -41,7 +41,7 @@
 ## 6. Чтение броней
 
 - [ ] 6.1 Тест: `get(id)` возвращает бронь с состоянием; неизвестный id → «не найдено» (падающий)
-- [ ] 6.2 Тест: `list_active_for_specialist(range)` возвращает только `booked` в диапазоне, исключает отменённые
+- [ ] 6.2 Тест: `list_active_in_range(range)` возвращает только `booked` в диапазоне, исключает отменённые
 - [ ] 6.3 Тест: `list_active_for_client(client_id)` возвращает только его `booked`
 - [ ] 6.4 Реализовать read-операции в `booking_service.py`
 - [ ] 6.5 Зелёные тесты 6.1–6.3
@@ -50,4 +50,3 @@
 
 - [ ] 7.1 `make test` зелёный, покрытие ≥ 80%
 - [ ] 7.2 `make validate` зелёный (ruff + format + mypy, без `# type: ignore`)
-- [ ] 7.3 `openspec validate add-booking-lifecycle --strict` проходит

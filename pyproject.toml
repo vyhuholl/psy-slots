@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "aiogram>=3.29.1",
+    "pydantic-settings>=2.14.2",
     "ydb>=3.30.0",
 ]
 
@@ -31,6 +32,7 @@ fail_under = 80
 [tool.mypy]
 python_version = "3.14"
 strict = true
+plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
 # У пакета ydb нет type-stubs (py.typed отсутствует).

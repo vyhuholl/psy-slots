@@ -1,42 +1,121 @@
 """Типизированная загрузка конфигурации из переменных окружения.
 
-Секреты (токен бота, webhook-секрет, параметры YDB) читаются только из
-окружения функции и никогда не хардкодятся. Отсутствие обязательной
-переменной — явная ошибка на этапе инициализации.
+Психолог один; все его параметры и тексты читаются только из окружения
+функции и никогда не хардкодятся: длительность слота, интервалы доступности
+(только время суток, без дня недели), таймзона, тексты сообщений и
+идентификатор администратора. Отсутствие обязательной переменной или
+недопустимое значение — явная ошибка на этапе инициализации.
 """
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
+from typing import Annotated
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from pydantic import Field, ValidationError, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+# Длительность слота по умолчанию, если переменная не задана.
+DEFAULT_SLOT_DURATION_MINUTES = 20
+# Минут в сутках — верхняя граница интервалов доступности.
+_MINUTES_PER_DAY = 24 * 60
 
 
 class ConfigError(RuntimeError):
-    """Обязательная переменная окружения отсутствует или пуста."""
+    """Обязательная переменная отсутствует, пуста или недопустима."""
 
 
 @dataclass(frozen=True)
-class Config:
-    """Разобранная конфигурация приложения."""
+class TimeInterval:
+    """Интервал времени суток в минутах от полуночи (без дня недели)."""
 
-    bot_token: str
-    webhook_secret: str
-    ydb_endpoint: str
-    ydb_database: str
+    start_minute: int
+    end_minute: int
 
 
-def _require(name: str) -> str:
-    value = os.environ.get(name)
-    if not value:
-        raise ConfigError(f"Missing required environment variable: {name}")
-    return value
+def _parse_time_of_day(value: str) -> int:
+    """Разобрать ``HH:MM`` в минуты от полуночи, провалидировав границы."""
+    hours_str, sep, minutes_str = value.partition(":")
+    if not sep or not hours_str.isdigit() or not minutes_str.isdigit():
+        raise ValueError(f"Invalid time of day: {value!r}")
+    hours, minutes = int(hours_str), int(minutes_str)
+    if minutes >= 60:
+        raise ValueError(f"Invalid minutes in time of day: {value!r}")
+    total = hours * 60 + minutes
+    if total > _MINUTES_PER_DAY:
+        raise ValueError(f"Time of day out of bounds: {value!r}")
+    return total
+
+
+class Config(BaseSettings):
+    """Разобранная конфигурация приложения (из переменных окружения)."""
+
+    model_config = SettingsConfigDict(
+        frozen=True,
+        case_sensitive=False,
+        extra="ignore",
+        arbitrary_types_allowed=True,
+    )
+
+    bot_token: str = Field(min_length=1)
+    webhook_secret: str = Field(min_length=1)
+    ydb_endpoint: str = Field(min_length=1)
+    ydb_database: str = Field(min_length=1)
+    admin_telegram_id: int
+    slot_duration_minutes: int = Field(
+        default=DEFAULT_SLOT_DURATION_MINUTES, gt=0
+    )
+    availability_intervals: Annotated[tuple[TimeInterval, ...], NoDecode]
+    timezone: ZoneInfo
+    welcome_message: str = Field(min_length=1)
+    booking_unavailable_message: str = Field(min_length=1)
+
+    @field_validator("availability_intervals", mode="before")
+    @classmethod
+    def _parse_intervals(cls, value: object) -> object:
+        """Разобрать ``10:00-14:00,15:00-18:00`` в набор интервалов."""
+        if not isinstance(value, str):
+            return value
+        intervals: list[TimeInterval] = []
+        for chunk in value.split(","):
+            start_str, sep, end_str = chunk.strip().partition("-")
+            if not sep:
+                raise ValueError(f"Invalid availability interval: {chunk!r}")
+            start = _parse_time_of_day(start_str.strip())
+            end = _parse_time_of_day(end_str.strip())
+            if start >= end:
+                raise ValueError(
+                    f"Interval start must be before end: {chunk!r}"
+                )
+            intervals.append(TimeInterval(start_minute=start, end_minute=end))
+
+        ordered = sorted(intervals, key=lambda i: i.start_minute)
+        for previous, current in zip(ordered, ordered[1:]):
+            if current.start_minute < previous.end_minute:
+                raise ValueError("Availability intervals must not overlap")
+        return tuple(ordered)
+
+    @field_validator("timezone", mode="before")
+    @classmethod
+    def _parse_timezone(cls, value: object) -> ZoneInfo:
+        if isinstance(value, ZoneInfo):
+            return value
+        if not isinstance(value, str) or not value:
+            raise ValueError("TIMEZONE must be a non-empty IANA identifier")
+        try:
+            return ZoneInfo(value)
+        except ZoneInfoNotFoundError, ValueError:
+            raise ValueError(f"Invalid IANA timezone: {value!r}") from None
 
 
 def load_config() -> Config:
     """Прочитать и провалидировать конфигурацию из окружения."""
-    return Config(
-        bot_token=_require("BOT_TOKEN"),
-        webhook_secret=_require("WEBHOOK_SECRET"),
-        ydb_endpoint=_require("YDB_ENDPOINT"),
-        ydb_database=_require("YDB_DATABASE"),
-    )
+    try:
+        return Config()
+    except ValidationError as exc:
+        names = sorted(
+            {str(err["loc"][0]).upper() for err in exc.errors() if err["loc"]}
+        )
+        detail = ", ".join(names) if names else str(exc)
+        raise ConfigError(f"Invalid configuration: {detail}") from exc

@@ -16,35 +16,11 @@ import ydb
 
 from app.ydb_client import get_pool
 
-# Таблица специалистов: неизменный UUID-строка (PK), имя, редактируемые
-# длительность слота (минуты) и таймзона (IANA-имя), метка создания.
-_SPECIALISTS_DDL = """\
-CREATE TABLE IF NOT EXISTS specialists (
-    id Utf8,
-    name Utf8,
-    slot_duration_minutes Uint32,
-    timezone Utf8,
-    created_at Timestamp,
-    PRIMARY KEY (id)
-);
-"""
-
-# Интервалы недельного расписания: неизменный UUID-строка (PK), ссылка на
-# специалиста, день недели (Monday=0 … Sunday=6) и границы в минутах от
-# полуночи — локальное настенное время специалиста, НЕ UTC.
-_AVAILABILITY_INTERVALS_DDL = """\
-CREATE TABLE IF NOT EXISTS availability_intervals (
-    id Utf8,
-    specialist_id Utf8,
-    weekday Uint8,
-    start_minute Uint16,
-    end_minute Uint16,
-    PRIMARY KEY (id)
-);
-"""
-
-# Идемпотентные DDL-инструкции. Каждая capability добавляет свои таблицы сюда.
-MIGRATIONS: tuple[str, ...] = (_SPECIALISTS_DDL, _AVAILABILITY_INTERVALS_DDL)
+# Идемпотентные DDL-инструкции. Психолог один, а длительность и интервалы
+# доступности берутся из окружения (см. bot-config), поэтому таблиц
+# специалистов и недельного расписания в схеме нет. Прикладные таблицы
+# (bookings, clients, sent_reminders) добавляют свои DDL сюда доменные changes.
+MIGRATIONS: tuple[str, ...] = ()
 
 
 def run_migrations(
