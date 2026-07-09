@@ -16,8 +16,21 @@ import ydb
 
 from app.ydb_client import get_pool
 
-# Идемпотентные DDL-инструкции. Пока пусто: доменных таблиц нет.
-MIGRATIONS: tuple[str, ...] = ()
+# Таблица специалистов: неизменный UUID-строка (PK), имя, редактируемые
+# длительность слота (минуты) и таймзона (IANA-имя), метка создания.
+_SPECIALISTS_DDL = """\
+CREATE TABLE IF NOT EXISTS specialists (
+    id Utf8,
+    name Utf8,
+    slot_duration_minutes Uint32,
+    timezone Utf8,
+    created_at Timestamp,
+    PRIMARY KEY (id)
+);
+"""
+
+# Идемпотентные DDL-инструкции. Каждая capability добавляет свои таблицы сюда.
+MIGRATIONS: tuple[str, ...] = (_SPECIALISTS_DDL,)
 
 
 def run_migrations(

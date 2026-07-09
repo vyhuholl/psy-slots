@@ -7,7 +7,7 @@ import pytest
 
 import app.handler as handler_module
 import app.migrations as migrations
-from app.migrations import run_migrations
+from app.migrations import MIGRATIONS, run_migrations
 from tests.conftest import TEST_WEBHOOK_SECRET
 from tests.test_handler import _event, _start_update
 
@@ -41,6 +41,24 @@ def test_run_migrations_uses_warm_pool_when_omitted(
     run_migrations(statements=DDL)
 
     pool.execute_with_retries.assert_called_once_with(DDL[0])
+
+
+def test_specialists_table_created_idempotently() -> None:
+    pool = MagicMock(name="pool")
+
+    run_migrations(pool=pool, statements=MIGRATIONS)
+
+    executed = [
+        call.args[0] for call in pool.execute_with_retries.call_args_list
+    ]
+    assert any(
+        "CREATE TABLE IF NOT EXISTS specialists" in stmt for stmt in executed
+    )
+    # Все DDL идемпотентны — повторный прогон не роняет и не дублирует.
+    assert all("IF NOT EXISTS" in stmt for stmt in executed)
+
+    run_migrations(pool=pool, statements=MIGRATIONS)
+    assert pool.execute_with_retries.call_count == 2 * len(MIGRATIONS)
 
 
 def test_migration_not_invoked_on_webhook_path(
