@@ -14,6 +14,7 @@ from __future__ import annotations
 from aiogram import Bot, Dispatcher
 
 from app.bot.handlers.client import build_client_router
+from app.bot.handlers.admin import build_admin_router
 from app.config import Config, load_config
 from app.services.booking_service import BookingService
 from app.services.client_service import ClientService
@@ -33,7 +34,7 @@ def create_dispatcher(
     slot_service: SlotService | None = None,
     booking_service: BookingService | None = None,
 ) -> Dispatcher:
-    """Собрать ``Dispatcher`` с клиентским роутером и внедрёнными сервисами.
+    """Собрать ``Dispatcher`` с клиентским и админ-роутером и внедрёнными сервисами.
 
     Каждый вызов даёт независимый экземпляр со свежим роутером (общий роутер
     нельзя привязать дважды). Переданные сервисы кладутся в workflow-данные и
@@ -42,6 +43,7 @@ def create_dispatcher(
     """
     dispatcher = Dispatcher()
     dispatcher.include_router(build_client_router())
+    dispatcher.include_router(build_admin_router())
     deps: dict[str, object] = {
         "config": config,
         "client_service": client_service,

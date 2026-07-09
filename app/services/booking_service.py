@@ -80,6 +80,10 @@ SELECT {_COLUMNS} FROM bookings
 WHERE status = 'booked' AND client_id = $client_id;
 """
 
+_SELECT_ALL_ACTIVE = f"""
+SELECT {_COLUMNS} FROM bookings WHERE status = 'booked';
+"""
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -299,5 +303,12 @@ class BookingService:
             self._pool.execute_with_retries(
                 _SELECT_ACTIVE_FOR_CLIENT, {"$client_id": _int64(client_id)}
             )
+        )
+        return [_row_to_booking(row) for row in rows]
+
+    def list_active(self) -> list[Booking]:
+        """Все активные (``booked``) брони."""
+        rows = _collect_rows(
+            self._pool.execute_with_retries(_SELECT_ALL_ACTIVE, {})
         )
         return [_row_to_booking(row) for row in rows]

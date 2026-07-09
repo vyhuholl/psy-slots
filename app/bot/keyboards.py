@@ -28,6 +28,7 @@ ACTION_SLOT = "slot"
 ACTION_CONFIRM = "confirm"
 ACTION_CANCEL = "cancel"
 ACTION_CANCEL_CONFIRM = "cancelok"
+ACTION_ADMIN_CANCEL = "admincancel"
 
 # Лимит Telegram на callback_data.
 CALLBACK_MAX_BYTES = 64
@@ -137,3 +138,17 @@ def cancel_confirm_keyboard(booking_id: str) -> InlineKeyboardMarkup:
         callback_data=pack(ACTION_CANCEL_CONFIRM, booking_id),
     )
     return InlineKeyboardMarkup(inline_keyboard=[[button]])
+
+
+def admin_bookings_keyboard(
+    bookings: Sequence[Booking], tz: ZoneInfo
+) -> InlineKeyboardMarkup:
+    """Клавиатура активных броней для администратора с кнопкой отмены на каждой."""
+    buttons = [
+        InlineKeyboardButton(
+            text=f"{format_slot_range(b.start, b.end, tz)} (client {b.client_id}) ❌",
+            callback_data=pack(ACTION_ADMIN_CANCEL, b.id),
+        )
+        for b in bookings
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=_rows(buttons, 1))
