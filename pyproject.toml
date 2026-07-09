@@ -24,3 +24,15 @@ line-length = 79
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+
+[tool.coverage.report]
+fail_under = 80
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+
+[[tool.mypy.overrides]]
+# У пакета ydb нет type-stubs (py.typed отсутствует).
+module = ["ydb", "ydb.*"]
+ignore_missing_imports = true
