@@ -12,6 +12,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from logging import getLogger
+from typing import Any
 
 from aiogram import Bot
 
@@ -75,6 +76,18 @@ def notify(*, now: datetime | None = None) -> None:
     except Exception as e:
         logger.error("Failed to process reminders: %s", e, exc_info=True)
         raise
+
+
+def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
+    """Точка входа YC timer-триггера.
+
+    YC вызывает точку входа как ``h(event, context)`` — два позиционных
+    аргумента, тогда как :func:`notify` принимает лишь keyword-only ``now``.
+    Эта обёртка адаптирует сигнатуру: аргументы триггера игнорируются,
+    обрабатываются созревшие напоминания, возвращается HTTP-ответ.
+    """
+    notify()
+    return {"statusCode": 200, "body": "ok"}
 
 
 def main() -> None:

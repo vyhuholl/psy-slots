@@ -85,6 +85,21 @@ def test_notify_returns_gracefully_on_service_error(
             notify(now=now)
 
 
+def test_handler_accepts_yc_event_and_context(env: None) -> None:
+    """YC-точка входа handler(event, context) зовёт notify и отдаёт 200.
+
+    YC вызывает точку входа двумя позиционными аргументами; handler должен
+    их принять (в отличие от notify с keyword-only ``now``) и вернуть ответ.
+    """
+    from app.notify import handler
+
+    with patch("app.notify.notify") as mock_notify:
+        result = handler({"messages": []}, object())
+
+    mock_notify.assert_called_once_with()
+    assert result == {"statusCode": 200, "body": "ok"}
+
+
 def test_notify_initializes_warm_bot_once(env: None) -> None:
     """Bot инициализируется один раз (тёплый инстанс)."""
     from app.notify import notify

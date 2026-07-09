@@ -4,6 +4,9 @@
 # Yandex Cloud credentials file
 key.json
 
+# Архив с кодом
+*.zip
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
