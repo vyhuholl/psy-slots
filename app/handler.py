@@ -37,6 +37,11 @@ _HTTP_FORBIDDEN = 403
 # Тёплые синглтоны переиспользуются между вызовами тёплого инстанса.
 _bot: Bot | None = None
 _dispatcher: Dispatcher | None = None
+# Тёплый событийный цикл: aiohttp-сессия бота привязывается к циклу при
+# создании, поэтому цикл нельзя закрывать между апдейтами. ``asyncio.run()``
+# создавал и закрывал новый цикл на каждый вызов — из-за чего повторный вызов
+# на тёплом инстансе падал с «Event loop is closed». Переиспользуем один цикл.
+_loop: asyncio.AbstractEventLoop | None = None
 
 
 def _get_bot() -> Bot:
@@ -44,6 +49,13 @@ def _get_bot() -> Bot:
     if _bot is None:
         _bot = create_bot()
     return _bot
+
+
+def _get_loop() -> asyncio.AbstractEventLoop:
+    global _loop
+    if _loop is None:
+        _loop = asyncio.new_event_loop()
+    return _loop
 
 
 def _get_dispatcher() -> Dispatcher:
@@ -101,5 +113,7 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         logger.warning("Ignored webhook request: malformed update body")
         return _response(_HTTP_OK, "ignored")
 
-    asyncio.run(_get_dispatcher().feed_update(_get_bot(), update))
+    _get_loop().run_until_complete(
+        _get_dispatcher().feed_update(_get_bot(), update)
+    )
     return _response(_HTTP_OK, "ok")

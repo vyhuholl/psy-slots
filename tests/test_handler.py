@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -127,6 +128,34 @@ def test_valid_json_but_not_an_update_skips_dispatch(
 
     assert response["statusCode"] == 200
     fake_dispatch.assert_not_awaited()
+
+
+def test_warm_instance_reuses_event_loop_across_invocations(
+    env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Повторный вызов на тёплом инстансе не должен падать с закрытым циклом.
+
+    aiohttp-сессия бота привязана к событийному циклу; два апдейта подряд
+    обязаны идти по одному и тому же, не закрытому циклу. С прежним
+    ``asyncio.run()`` второй вызов видел бы уже закрытый цикл.
+    """
+    seen: list[asyncio.AbstractEventLoop] = []
+
+    async def recording_feed(bot: Any, update: Any) -> None:
+        seen.append(asyncio.get_running_loop())
+
+    dispatcher = MagicMock()
+    dispatcher.feed_update = recording_feed
+    monkeypatch.setattr(handler_module, "_get_dispatcher", lambda: dispatcher)
+    monkeypatch.setattr(handler_module, "_get_bot", lambda: object())
+
+    event = _event(json.dumps(_start_update()))
+    handler(event, None)
+    handler(event, None)
+
+    assert len(seen) == 2
+    assert seen[0] is seen[1]
+    assert not seen[0].is_closed()
 
 
 def test_duplicate_update_id_has_no_persistent_effect(
