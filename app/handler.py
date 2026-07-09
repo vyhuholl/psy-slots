@@ -22,6 +22,10 @@ from pydantic import ValidationError
 
 from app.bot import create_bot, create_dispatcher
 from app.config import load_config
+from app.services.booking_service import BookingService
+from app.services.client_service import ClientService
+from app.services.slot_service import SlotService
+from app.ydb_client import get_pool
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +49,15 @@ def _get_bot() -> Bot:
 def _get_dispatcher() -> Dispatcher:
     global _dispatcher
     if _dispatcher is None:
-        _dispatcher = create_dispatcher()
+        config = load_config()
+        pool = get_pool()
+        booking_service = BookingService(config, pool)
+        _dispatcher = create_dispatcher(
+            config=config,
+            client_service=ClientService(pool),
+            slot_service=SlotService(config, booking_service),
+            booking_service=booking_service,
+        )
     return _dispatcher
 
 

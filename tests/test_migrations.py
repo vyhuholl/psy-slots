@@ -75,6 +75,17 @@ def test_run_migrations_creates_bookings_idempotently() -> None:
     assert len(executed) == 2 * len(MIGRATIONS)
 
 
+def test_clients_table_is_migrated() -> None:
+    joined = "\n".join(MIGRATIONS)
+    # Профиль клиента: telegram_id (PK), IANA-таймзона, created_at.
+    assert "clients" in joined
+    assert "telegram_id" in joined
+    assert "timezone" in joined
+    assert "created_at" in joined
+    # Идемпотентность: повторный прогон миграций безопасен.
+    assert all("IF NOT EXISTS" in stmt for stmt in MIGRATIONS)
+
+
 def test_obsolete_tables_are_not_migrated() -> None:
     # Психолог один, интервалы — из окружения: таблиц специалистов и
     # недельного расписания больше нет в схеме.
