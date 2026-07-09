@@ -61,6 +61,23 @@ def test_specialists_table_created_idempotently() -> None:
     assert pool.execute_with_retries.call_count == 2 * len(MIGRATIONS)
 
 
+def test_availability_intervals_table_created_idempotently() -> None:
+    pool = MagicMock(name="pool")
+
+    run_migrations(pool=pool, statements=MIGRATIONS)
+
+    executed = [
+        call.args[0] for call in pool.execute_with_retries.call_args_list
+    ]
+    assert any(
+        "CREATE TABLE IF NOT EXISTS availability_intervals" in stmt
+        for stmt in executed
+    )
+    # Повторный прогон идемпотентен: те же DDL, без дублей и ошибок.
+    run_migrations(pool=pool, statements=MIGRATIONS)
+    assert pool.execute_with_retries.call_count == 2 * len(MIGRATIONS)
+
+
 def test_migration_not_invoked_on_webhook_path(
     env: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:

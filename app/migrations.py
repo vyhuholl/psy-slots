@@ -29,8 +29,22 @@ CREATE TABLE IF NOT EXISTS specialists (
 );
 """
 
+# Интервалы недельного расписания: неизменный UUID-строка (PK), ссылка на
+# специалиста, день недели (Monday=0 … Sunday=6) и границы в минутах от
+# полуночи — локальное настенное время специалиста, НЕ UTC.
+_AVAILABILITY_INTERVALS_DDL = """\
+CREATE TABLE IF NOT EXISTS availability_intervals (
+    id Utf8,
+    specialist_id Utf8,
+    weekday Uint8,
+    start_minute Uint16,
+    end_minute Uint16,
+    PRIMARY KEY (id)
+);
+"""
+
 # Идемпотентные DDL-инструкции. Каждая capability добавляет свои таблицы сюда.
-MIGRATIONS: tuple[str, ...] = (_SPECIALISTS_DDL,)
+MIGRATIONS: tuple[str, ...] = (_SPECIALISTS_DDL, _AVAILABILITY_INTERVALS_DDL)
 
 
 def run_migrations(
