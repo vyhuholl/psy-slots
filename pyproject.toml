@@ -1,13 +1,14 @@
 [project]
 name = "psy-slots"
-version = "0.1.0"
+version = "1.0.0"
 description = "Telegram-бот бронирования слотов у психологов"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "aiogram>=3.29.1",
     "pydantic-settings>=2.14.2",
-    "ydb>=3.30.0",
+    "python-dotenv>=1.2.2",
+    "ydb[yc]>=3.30.0",
 ]
 
 [dependency-groups]

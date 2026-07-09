@@ -13,8 +13,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import ydb
+from dotenv import load_dotenv
 
 from app.ydb_client import get_pool
+
+load_dotenv()  # для локального запуска миграций из .env
 
 # Бронь — самостоятельная строка с неизменным UUID и явными start/end в UTC
 # (а не «слот занят»). Ссылки на специалиста нет — психолог один. Вторичный

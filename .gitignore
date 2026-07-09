@@ -1,6 +1,9 @@
 # macOS system file
 .DS_Store
 
+# Yandex Cloud credentials file
+key.json
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
