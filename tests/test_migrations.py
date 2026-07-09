@@ -48,6 +48,33 @@ def test_all_migrations_are_idempotent() -> None:
     assert all("IF NOT EXISTS" in stmt for stmt in MIGRATIONS)
 
 
+def test_bookings_table_and_index_are_migrated() -> None:
+    joined = "\n".join(MIGRATIONS)
+    # Таблица bookings с явными start/end в UTC и вторичным индексом
+    # по start_utc для проверки пересечений и списков в диапазоне.
+    assert "bookings" in joined
+    assert "start_utc" in joined
+    assert "end_utc" in joined
+    assert "INDEX" in joined
+    assert "start_utc" in joined
+    # Идемпотентность: повторный прогон миграций безопасен.
+    assert all("IF NOT EXISTS" in stmt for stmt in MIGRATIONS)
+
+
+def test_run_migrations_creates_bookings_idempotently() -> None:
+    pool = MagicMock(name="pool")
+
+    run_migrations(pool=pool)
+    run_migrations(pool=pool)
+
+    executed = [
+        call.args[0] for call in pool.execute_with_retries.call_args_list
+    ]
+    assert any("bookings" in stmt and "start_utc" in stmt for stmt in executed)
+    # Каждый прогон применяет тот же идемпотентный DDL.
+    assert len(executed) == 2 * len(MIGRATIONS)
+
+
 def test_obsolete_tables_are_not_migrated() -> None:
     # Психолог один, интервалы — из окружения: таблиц специалистов и
     # недельного расписания больше нет в схеме.

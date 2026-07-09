@@ -16,11 +16,30 @@ import ydb
 
 from app.ydb_client import get_pool
 
+# Бронь — самостоятельная строка с неизменным UUID и явными start/end в UTC
+# (а не «слот занят»). Ссылки на специалиста нет — психолог один. Вторичный
+# индекс по start_utc ускоряет проверку пересечений и списки в диапазоне.
+# Денормализованный end_utc фиксируется при создании, чтобы изменение
+# длительности слота (env) не сдвигало существующие брони.
+_CREATE_BOOKINGS = """
+CREATE TABLE IF NOT EXISTS bookings (
+    id Utf8,
+    client_id Int64,
+    start_utc Timestamp,
+    end_utc Timestamp,
+    status Utf8,
+    created_at Timestamp,
+    cancelled_at Timestamp,
+    INDEX idx_bookings_start GLOBAL ON (start_utc),
+    PRIMARY KEY (id)
+);
+"""
+
 # Идемпотентные DDL-инструкции. Психолог один, а длительность и интервалы
 # доступности берутся из окружения (см. bot-config), поэтому таблиц
 # специалистов и недельного расписания в схеме нет. Прикладные таблицы
-# (bookings, clients, sent_reminders) добавляют свои DDL сюда доменные changes.
-MIGRATIONS: tuple[str, ...] = ()
+# (clients, sent_reminders) добавляют свои DDL сюда доменные changes.
+MIGRATIONS: tuple[str, ...] = (_CREATE_BOOKINGS,)
 
 
 def run_migrations(
