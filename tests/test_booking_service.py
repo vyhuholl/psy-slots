@@ -10,8 +10,10 @@ import ydb
 
 from app.config import Config, load_config
 from app.domain.booking import (
+    BookingError,
     BookingNotFound,
     BookingStatus,
+    ClientAlreadyBooked,
     SlotMisaligned,
     SlotNotToday,
     SlotOutsideAvailability,
@@ -43,10 +45,20 @@ def _is_write(query: str) -> bool:
 
 
 class _FakeTx:
-    """Транзакция: SELECT отдаёт заданные строки, запись — пустой набор."""
+    """Транзакция: SELECT отдаёт заданные строки, запись — пустой набор.
 
-    def __init__(self, select_rows: list[dict[str, Any]]) -> None:
+    Отдельный набор ``client_rows`` возвращается для запроса активных броней
+    клиента (SELECT c ``client_id``), чтобы отличать проверку слота от
+    проверки «одна активная бронь на клиента».
+    """
+
+    def __init__(
+        self,
+        select_rows: list[dict[str, Any]],
+        client_rows: list[dict[str, Any]] | None = None,
+    ) -> None:
         self._select_rows = select_rows
+        self._client_rows = client_rows
         self.queries: list[tuple[str, dict[str, Any]]] = []
 
     def execute(
@@ -55,6 +67,8 @@ class _FakeTx:
         self.queries.append((query, parameters or {}))
         if _is_write(query):
             return [_FakeResultSet([])]
+        if self._client_rows is not None and "client_id" in query:
+            return [_FakeResultSet(list(self._client_rows))]
         return [_FakeResultSet(list(self._select_rows))]
 
 
@@ -63,10 +77,11 @@ class _FakePool:
         self,
         *,
         select_rows: list[dict[str, Any]] | None = None,
+        client_rows: list[dict[str, Any]] | None = None,
         tx_error: Exception | None = None,
         read_rows: list[dict[str, Any]] | None = None,
     ) -> None:
-        self.tx = _FakeTx(select_rows or [])
+        self.tx = _FakeTx(select_rows or [], client_rows)
         self._tx_error = tx_error
         self._read_rows = read_rows or []
         self.read_queries: list[tuple[str, dict[str, Any]]] = []
@@ -253,6 +268,55 @@ def test_rebooking_after_cancellation_succeeds(config: Config) -> None:
 
     assert booking.status is BookingStatus.BOOKED
     assert _tx_writes(pool), "новая бронь должна быть записана"
+
+
+# --- 4b. Одна активная бронь на клиента ------------------------------------
+
+
+def test_create_second_active_booking_is_rejected(config: Config) -> None:
+    # Слот свободен (overlap пуст), но у клиента уже есть активная бронь.
+    pool = _FakePool(select_rows=[], client_rows=[{"id": "existing"}])
+    service = BookingService(config, pool)
+
+    with pytest.raises(ClientAlreadyBooked):
+        service.create(client_id=42, start=VALID_START, now=NOW)
+
+    assert _tx_writes(pool) == []
+
+
+def test_create_after_cancellation_succeeds(config: Config) -> None:
+    # После отмены активных броней у клиента нет — запись проходит.
+    pool = _FakePool(select_rows=[], client_rows=[])
+    service = BookingService(config, pool)
+
+    booking = service.create(client_id=42, start=VALID_START, now=NOW)
+
+    assert booking.status is BookingStatus.BOOKED
+    assert _tx_writes(pool), "новая бронь должна быть записана"
+
+
+def test_other_clients_booking_does_not_block(config: Config) -> None:
+    # Активная бронь чужого клиента не попадает в SELECT по этому client_id.
+    pool = _FakePool(select_rows=[], client_rows=[])
+    service = BookingService(config, pool)
+
+    booking = service.create(client_id=7, start=VALID_START, now=NOW)
+
+    assert booking.client_id == 7
+    assert booking.status is BookingStatus.BOOKED
+
+
+def test_concurrent_creation_by_one_client_becomes_domain_error(
+    config: Config,
+) -> None:
+    # Проигравший конкурентный коммит (Aborted) — доменная ошибка брони.
+    pool = _FakePool(
+        tx_error=ydb.issues.Aborted("Transaction locks invalidated")
+    )
+    service = BookingService(config, pool)
+
+    with pytest.raises(BookingError):
+        service.create(client_id=42, start=VALID_START, now=NOW)
 
 
 # --- 5. Отмена (soft, идемпотентная) ---------------------------------------

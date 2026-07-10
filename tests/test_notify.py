@@ -98,6 +98,34 @@ def test_handler_accepts_yc_event_and_context(env: None) -> None:
     assert result == {"statusCode": 200, "body": "ok"}
 
 
+def test_reminder_service_receives_admin_telegram_id(
+    env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ReminderService создаётся с admin_telegram_id из конфигурации."""
+    import app.notify as notify_mod
+    from app.config import load_config
+
+    # Сбросить тёплые синглтоны, чтобы форсировать реконструкцию сервиса.
+    monkeypatch.setattr(notify_mod, "_reminder_service", None)
+    monkeypatch.setattr(notify_mod, "_bot", None)
+
+    now = datetime(2026, 7, 9, 6, 55, tzinfo=_UTC)
+    mock_service = MagicMock()
+
+    with (
+        patch("app.notify.get_pool"),
+        patch("app.notify.BookingService"),
+        patch(
+            "app.notify.ReminderService", return_value=mock_service
+        ) as mock_rs,
+    ):
+        notify_mod.notify(now=now)
+
+    admin_id = load_config().admin_telegram_id
+    args, kwargs = mock_rs.call_args
+    assert admin_id in args or kwargs.get("admin_telegram_id") == admin_id
+
+
 def test_notify_initializes_warm_bot_once(env: None) -> None:
     """Bot инициализируется один раз (тёплый инстанс)."""
     from app.notify import notify

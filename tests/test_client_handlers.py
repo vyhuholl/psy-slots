@@ -31,6 +31,7 @@ from app.config import Config, load_config
 from app.domain.booking import (
     Booking,
     BookingStatus,
+    ClientAlreadyBooked,
     SlotNotToday,
     SlotTaken,
 )
@@ -220,6 +221,11 @@ async def test_slot_shows_confirmation(config: Config) -> None:
 
 async def test_confirm_creates_booking_and_confirms(config: Config) -> None:
     bot = AsyncMock()
+    bot.get_chat = AsyncMock(
+        return_value=SimpleNamespace(
+            first_name="Иван", last_name="Иванов", username="ivanov"
+        )
+    )
     booking_service = MagicMock()
     booking_service.create.return_value = _booking()
 
@@ -233,8 +239,108 @@ async def test_confirm_creates_booking_and_confirms(config: Config) -> None:
     booking_service.create.assert_called_once_with(
         client_id=CLIENT_ID, start=START
     )
-    text = bot.send_message.call_args.args[1]
-    assert "10:00" in text
+    # Клиенту — подтверждение записи.
+    client_call = bot.send_message.await_args_list[0]
+    assert client_call.args[0] == CLIENT_ID
+    assert "Готово" in client_call.args[1]
+    assert "10:00" in client_call.args[1]
+
+
+async def test_confirm_notifies_admin_of_new_booking(config: Config) -> None:
+    bot = AsyncMock()
+    bot.get_chat = AsyncMock(
+        return_value=SimpleNamespace(
+            first_name="Иван", last_name="Иванов", username="ivanov"
+        )
+    )
+    booking_service = MagicMock()
+    booking_service.create.return_value = _booking()
+
+    await handle_confirm(
+        _callback(pack(ACTION_CONFIRM, str(int(START.timestamp())))),
+        bot=bot,
+        config=config,
+        booking_service=booking_service,
+    )
+
+    admin_call = next(
+        call
+        for call in bot.send_message.await_args_list
+        if call.args[0] == ADMIN_ID
+    )
+    assert admin_call.args[1] == (
+        "Пользователь Иван Иванов (@ivanov) забронировал слот на 10:00–10:20."
+    )
+
+
+async def test_confirm_admin_notify_failure_does_not_raise(
+    config: Config,
+) -> None:
+    bot = AsyncMock()
+    bot.get_chat = AsyncMock(
+        return_value=SimpleNamespace(
+            first_name=None, last_name=None, username=None
+        )
+    )
+    # Клиенту — успех, администратору — сбой доставки.
+    bot.send_message.side_effect = [None, RuntimeError("admin unreachable")]
+    booking_service = MagicMock()
+    booking_service.create.return_value = _booking()
+
+    await handle_confirm(
+        _callback(pack(ACTION_CONFIRM, str(int(START.timestamp())))),
+        bot=bot,
+        config=config,
+        booking_service=booking_service,
+    )
+
+    # Бронь создана, несмотря на сбой уведомления администратора.
+    booking_service.create.assert_called_once()
+
+
+async def test_confirm_rejected_does_not_notify_admin(config: Config) -> None:
+    bot = AsyncMock()
+    booking_service = MagicMock()
+    booking_service.create.side_effect = SlotTaken("taken")
+    booking_service.list_active_for_client.return_value = []
+
+    await handle_confirm(
+        _callback(pack(ACTION_CONFIRM, str(int(START.timestamp())))),
+        bot=bot,
+        config=config,
+        booking_service=booking_service,
+    )
+
+    # Администратору не отправлялось уведомление о новой броне.
+    assert all(
+        call.args[0] != ADMIN_ID for call in bot.send_message.await_args_list
+    )
+
+
+async def test_confirm_client_already_booked_is_reported(
+    config: Config,
+) -> None:
+    bot = AsyncMock()
+    booking_service = MagicMock()
+    booking_service.create.side_effect = ClientAlreadyBooked("dup")
+
+    await handle_confirm(
+        _callback(pack(ACTION_CONFIRM, str(int(START.timestamp())))),
+        bot=bot,
+        config=config,
+        booking_service=booking_service,
+    )
+
+    client_call = next(
+        call
+        for call in bot.send_message.await_args_list
+        if call.args[0] == CLIENT_ID
+    )
+    assert "одну" in client_call.args[1].lower()
+    # Уведомление о брони администратору не уходит.
+    assert all(
+        call.args[0] != ADMIN_ID for call in bot.send_message.await_args_list
+    )
 
 
 async def test_confirm_slot_taken_by_other_is_friendly(

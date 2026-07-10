@@ -48,7 +48,11 @@ def _get_reminder_service() -> ReminderService:
         booking_service = BookingService(config, pool)
         bot = _get_bot()
         _reminder_service = ReminderService(
-            booking_service, pool, bot, config.timezone
+            booking_service,
+            pool,
+            bot,
+            config.timezone,
+            config.admin_telegram_id,
         )
     return _reminder_service
 

@@ -23,6 +23,7 @@ from app.domain.booking import (
     Booking,
     BookingNotFound,
     BookingStatus,
+    ClientAlreadyBooked,
     SlotMisaligned,
     SlotNotToday,
     SlotOutsideAvailability,
@@ -41,6 +42,11 @@ DECLARE $start_utc AS Timestamp;
 DECLARE $end_utc AS Timestamp;
 SELECT id FROM bookings
 WHERE status = 'booked' AND start_utc < $end_utc AND end_utc > $start_utc;
+"""
+
+_SELECT_CLIENT_ACTIVE = """
+DECLARE $client_id AS Int64;
+SELECT id FROM bookings WHERE status = 'booked' AND client_id = $client_id;
 """
 
 _UPSERT_BOOKING = """
@@ -183,6 +189,15 @@ class BookingService:
             )
             if overlap:
                 raise SlotTaken(f"Slot {start_utc.isoformat()} is taken")
+            client_active = _collect_rows(
+                tx.execute(
+                    _SELECT_CLIENT_ACTIVE, {"$client_id": _int64(client_id)}
+                )
+            )
+            if client_active:
+                raise ClientAlreadyBooked(
+                    f"Client {client_id} already has an active booking"
+                )
             tx.execute(
                 _UPSERT_BOOKING,
                 {

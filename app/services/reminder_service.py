@@ -18,6 +18,7 @@ import ydb
 from aiogram import Bot
 
 from app.bot.formatting import format_slot_range
+from app.bot.naming import resolve_client_name
 from app.services.booking_service import BookingService
 
 logger = getLogger(__name__)
@@ -71,11 +72,13 @@ class ReminderService:
         pool: ydb.QuerySessionPool,
         bot: Bot,
         display_timezone: ZoneInfo,
+        admin_telegram_id: int,
     ) -> None:
         self._booking_service = booking_service
         self._pool = pool
         self._bot = bot
         self._display_timezone = display_timezone
+        self._admin_telegram_id = admin_telegram_id
 
     def send_pending(self, *, now: datetime | None = None) -> None:
         """Отправить напоминания по созревшим броням.
@@ -129,6 +132,18 @@ class ReminderService:
             # Не падаем, продолжаем обработку
             return
 
+        # Напоминание администратору — best-effort: его сбой НЕ снимает claim
+        # (клиенту уже доставлено), чтобы не продублировать клиентское.
+        try:
+            self._send_admin_reminder(booking)
+        except Exception as e:
+            logger.warning(
+                "Failed to send admin reminder for booking %s: %s",
+                booking.id,
+                e,
+                exc_info=True,
+            )
+
     def _marker_exists(self, booking_id: str) -> bool:
         """Проверить существование маркера отправки."""
         rows = _collect_rows(
@@ -167,7 +182,7 @@ class ReminderService:
         )
 
         # Текст напоминания
-        text = f"Напоминание: вы записаны на {time_str}."
+        text = f"❗️ Напоминание: вы записаны на {time_str}"
 
         # Отправляем через Bot. В проде send_message возвращает корутину —
         # выполняем её через asyncio.run в sync-контексте; синхронный
@@ -175,6 +190,23 @@ class ReminderService:
         result = self._bot.send_message(booking.client_id, text)
         if inspect.isawaitable(result):
             asyncio.run(result)
+
+    def _send_admin_reminder(self, booking: Any) -> None:
+        """Отправить админу напоминание с человекочитаемым именем клиента.
+
+        Имя берётся вживую через ``bot.get_chat`` (как в админ-потоке).
+        Резолв имени и отправка выполняются одной корутиной под ``asyncio.run``,
+        чтобы поддержать и синхронные тестовые двойники, и реальный async Bot.
+        """
+
+        async def _flow() -> None:
+            name = await resolve_client_name(self._bot, booking.client_id)
+            text = f"❗️ Через 5 минут начнётся сессия с пользователем {name}"
+            result = self._bot.send_message(self._admin_telegram_id, text)
+            if inspect.isawaitable(result):
+                await result
+
+        asyncio.run(_flow())
 
 
 def _collect_rows(result_sets: Any) -> list[Any]:

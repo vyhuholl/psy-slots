@@ -67,5 +67,9 @@ class SlotTaken(BookingError):
     """Слот пересекается с активной бронью (двойное бронирование)."""
 
 
+class ClientAlreadyBooked(BookingError):
+    """У клиента уже есть активная бронь — вторая не допускается."""
+
+
 class BookingNotFound(BookingError):
     """Бронь с указанным id не найдена."""

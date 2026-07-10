@@ -38,7 +38,12 @@ from app.bot.keyboards import (
 )
 from app.bot.naming import resolve_client_name
 from app.config import Config
-from app.domain.booking import Booking, BookingError, SlotTaken
+from app.domain.booking import (
+    Booking,
+    BookingError,
+    ClientAlreadyBooked,
+    SlotTaken,
+)
 from app.services.booking_service import BookingService
 from app.services.slot_service import SlotService
 
@@ -177,6 +182,13 @@ async def handle_confirm(
                 "Этот слот только что заняли — выберите, пожалуйста, другой.",
             )
         return
+    except ClientAlreadyBooked:
+        await bot.send_message(
+            client_id,
+            "У вас уже есть активная запись — можно иметь только одну. "
+            "Отмените её в «🗓️ Мои записи», чтобы записаться заново.",
+        )
+        return
     except BookingError:
         await bot.send_message(
             client_id,
@@ -188,6 +200,17 @@ async def handle_confirm(
         f"Готово! Вы записаны на "
         f"{format_slot_range(booking.start, booking.end, tz)}.",
     )
+
+    # Уведомление администратору о новой броне (сбой не откатывает бронь).
+    try:
+        name = await resolve_client_name(bot, client_id)
+        time_str = format_slot_range(booking.start, booking.end, tz)
+        await bot.send_message(
+            config.admin_telegram_id,
+            f"Пользователь {name} забронировал слот на {time_str}.",
+        )
+    except Exception:
+        pass
 
 
 async def handle_my_bookings(

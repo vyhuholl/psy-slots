@@ -9,8 +9,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -23,6 +24,7 @@ _UTC = timezone.utc
 # Europe/Moscow = UTC+3 (без DST). Локальное 10:00 = 07:00 UTC.
 NOW = datetime(2026, 7, 9, 6, 0, tzinfo=_UTC)  # Москва 09:00
 BOOKING_START = datetime(2026, 7, 9, 7, 0, tzinfo=_UTC)  # Москва 10:00
+ADMIN_ID = 999  # администратор, отличный от клиентов в тестах
 
 
 # --- Тестовые двойники YDB -------------------------------------------------
@@ -210,13 +212,17 @@ def test_reminder_sent_when_booking_is_mature(
     bot_mock = MagicMock()
     bot_mock.send_message.return_value = None
 
-    service = ReminderService(booking_service, pool, bot_mock, config.timezone)
+    service = ReminderService(
+        booking_service, pool, bot_mock, config.timezone, ADMIN_ID
+    )
     service.send_pending(now=now)
 
-    # Напоминание отправлено
-    bot_mock.send_message.assert_called_once()
-    call_args = bot_mock.send_message.call_args
-    assert call_args[0][0] == 42  # client_id
+    # Напоминание отправлено клиенту (первым) и администратору (вторым).
+    assert bot_mock.send_message.call_count == 2
+    client_call = bot_mock.send_message.call_args_list[0]
+    assert client_call[0][0] == 42  # client_id
+    admin_call = bot_mock.send_message.call_args_list[1]
+    assert admin_call[0][0] == ADMIN_ID
 
 
 def test_reminder_not_sent_when_booking_not_mature(
@@ -237,7 +243,9 @@ def test_reminder_not_sent_when_booking_not_mature(
     bot_mock = MagicMock()
     bot_mock.send_message.return_value = None
 
-    service = ReminderService(booking_service, pool, bot_mock, config.timezone)
+    service = ReminderService(
+        booking_service, pool, bot_mock, config.timezone, ADMIN_ID
+    )
     service.send_pending(now=now)
 
     # Напоминание НЕ отправлено
@@ -273,7 +281,9 @@ def test_reminder_idempotent_no_duplicate_on_second_tick(
     bot_mock = MagicMock()
     bot_mock.send_message.return_value = None
 
-    service = ReminderService(booking_service, pool, bot_mock, config.timezone)
+    service = ReminderService(
+        booking_service, pool, bot_mock, config.timezone, ADMIN_ID
+    )
     service.send_pending(now=now)
 
     # Напоминание НЕ отправлено (уже было)
@@ -304,7 +314,9 @@ def test_cancelled_booking_not_reminded(
     bot_mock = MagicMock()
     bot_mock.send_message.return_value = None
 
-    service = ReminderService(booking_service, pool, bot_mock, config.timezone)
+    service = ReminderService(
+        booking_service, pool, bot_mock, config.timezone, ADMIN_ID
+    )
     service.send_pending(now=now)
 
     bot_mock.send_message.assert_not_called()
@@ -327,7 +339,9 @@ def test_past_booking_not_reminded(
     bot_mock = MagicMock()
     bot_mock.send_message.return_value = None
 
-    service = ReminderService(booking_service, pool, bot_mock, config.timezone)
+    service = ReminderService(
+        booking_service, pool, bot_mock, config.timezone, ADMIN_ID
+    )
     service.send_pending(now=now)
 
     bot_mock.send_message.assert_not_called()
@@ -353,12 +367,14 @@ def test_reminder_text_in_moscow_timezone(
     bot_mock = MagicMock()
     bot_mock.send_message.return_value = None
 
-    service = ReminderService(booking_service, pool, bot_mock, config.timezone)
+    service = ReminderService(
+        booking_service, pool, bot_mock, config.timezone, ADMIN_ID
+    )
     service.send_pending(now=now)
 
-    # Проверяем, что время в сообщении в Europe/Moscow (10:00, не 07:00)
-    call_args = bot_mock.send_message.call_args
-    message_text = call_args[0][1]
+    # Проверяем, что время в клиентском сообщении в Europe/Moscow (10:00).
+    client_call = bot_mock.send_message.call_args_list[0]
+    message_text = client_call[0][1]
     assert "10:00" in message_text or "10:" in message_text
     # 07:00 UTC не должно быть в тексте
     assert "07:00" not in message_text
@@ -382,20 +398,133 @@ def test_send_error_does_not_crash_loop_and_unclaims_marker(
     booking_service = BookingService(config, pool)
 
     bot_mock = MagicMock()
-    # Первый отправляется успешно
-    bot_mock.send_message.side_effect = [None, Exception("Blocked by user")]
 
-    service = ReminderService(booking_service, pool, bot_mock, config.timezone)
+    # Клиент booking2 (id=2) недоступен; остальные (клиент id=1, админ) — ок.
+    def _send(chat_id: int, text: str) -> None:
+        if chat_id == 2:
+            raise Exception("Blocked by user")
+        return None
+
+    bot_mock.send_message.side_effect = _send
+
+    service = ReminderService(
+        booking_service, pool, bot_mock, config.timezone, ADMIN_ID
+    )
     # Должно завершиться без исключения
     service.send_pending(now=now)
 
-    # Было 2 попытки отправки
-    assert bot_mock.send_message.call_count == 2
-
-    # Первая бронь имеет маркер
+    # Первая бронь доставлена клиенту — маркер зафиксирован.
     assert "bid-1" in pool._sent_reminders
-    # Вторая — нет (ошибка отправки, claim снят)
+    # Вторая — ошибка клиентской отправки, claim снят.
     assert "bid-2" not in pool._sent_reminders
+
+
+# --- 3. Напоминание администратору за 5 минут ------------------------------
+
+
+def test_admin_reminder_sent_when_mature(config: Config) -> None:
+    """При созревшем напоминании админу уходит текст с именем клиента."""
+    from app.services.booking_service import BookingService
+    from app.services.reminder_service import ReminderService
+
+    now = datetime(2026, 7, 9, 6, 55, tzinfo=_UTC)
+    booking = _booking(start=BOOKING_START, client_id=42)
+
+    pool = _FakePool(active_bookings=[booking])
+    booking_service = BookingService(config, pool)
+
+    bot_mock = MagicMock()
+    bot_mock.send_message.return_value = None
+    bot_mock.get_chat = AsyncMock(
+        return_value=SimpleNamespace(
+            first_name="Иван", last_name="Иванов", username="ivanov"
+        )
+    )
+
+    service = ReminderService(
+        booking_service, pool, bot_mock, config.timezone, ADMIN_ID
+    )
+    service.send_pending(now=now)
+
+    admin_call = next(
+        call
+        for call in bot_mock.send_message.call_args_list
+        if call[0][0] == ADMIN_ID
+    )
+    assert admin_call[0][1] == (
+        "❗️ Через 5 минут начнётся сессия с пользователем Иван Иванов (@ivanov)"
+    )
+
+
+def test_admin_send_failure_keeps_client_marker(config: Config) -> None:
+    """Сбой отправки админу не снимает claim и не дублирует клиента."""
+    from app.services.booking_service import BookingService
+    from app.services.reminder_service import ReminderService
+
+    now = datetime(2026, 7, 9, 6, 55, tzinfo=_UTC)
+    booking = _booking(start=BOOKING_START, booking_id="bid-1", client_id=7)
+
+    pool = _FakePool(active_bookings=[booking])
+    booking_service = BookingService(config, pool)
+
+    bot_mock = MagicMock()
+
+    def _send(chat_id: int, text: str) -> None:
+        if chat_id == ADMIN_ID:
+            raise Exception("admin unreachable")
+        return None
+
+    bot_mock.send_message.side_effect = _send
+    bot_mock.get_chat = AsyncMock(
+        return_value=SimpleNamespace(
+            first_name="Анна", last_name=None, username="anna"
+        )
+    )
+
+    service = ReminderService(
+        booking_service, pool, bot_mock, config.timezone, ADMIN_ID
+    )
+    # Не роняет проход.
+    service.send_pending(now=now)
+
+    # Клиентский маркер зафиксирован (админский сбой его не снимает).
+    assert "bid-1" in pool._sent_reminders
+    # Клиенту отправлено ровно один раз (без дубля).
+    client_calls = [
+        call
+        for call in bot_mock.send_message.call_args_list
+        if call[0][0] == 7
+    ]
+    assert len(client_calls) == 1
+
+
+def test_cancelled_booking_not_reminded_to_admin(config: Config) -> None:
+    """По отменённой броне админ не получает напоминания."""
+    from app.services.booking_service import BookingService
+    from app.services.reminder_service import ReminderService
+
+    now = datetime(2026, 7, 9, 6, 55, tzinfo=_UTC)
+    booking = _booking(
+        start=BOOKING_START,
+        status=BookingStatus.CANCELLED,
+        cancelled_at=NOW - timedelta(minutes=10),
+    )
+
+    pool = _FakePool(active_bookings=[booking])
+    booking_service = BookingService(config, pool)
+
+    bot_mock = MagicMock()
+    bot_mock.send_message.return_value = None
+    bot_mock.get_chat = AsyncMock()
+
+    service = ReminderService(
+        booking_service, pool, bot_mock, config.timezone, ADMIN_ID
+    )
+    service.send_pending(now=now)
+
+    assert all(
+        call[0][0] != ADMIN_ID for call in bot_mock.send_message.call_args_list
+    )
 
 
 # --- 2.6 Лид-тайм — фиксированная константа 5 минут -----------------------
