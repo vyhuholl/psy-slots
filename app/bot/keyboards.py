@@ -124,7 +124,7 @@ def bookings_keyboard(
     """Клавиатура активных броней клиента с кнопкой отмены на каждой."""
     buttons = [
         InlineKeyboardButton(
-            text=f"{format_slot_range(b.start, b.end, tz)} ❌",
+            text=f"{format_slot_range(b.start, b.end, tz)} (Африка) ❌",
             callback_data=pack(ACTION_CANCEL, b.id),
         )
         for b in bookings
