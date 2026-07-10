@@ -16,7 +16,6 @@ import pytest
 
 from app.config import Config, load_config
 from app.domain.booking import Booking, BookingStatus
-from app.domain.client import Client
 from app.services.reminder_service import REMINDER_LEAD
 
 _UTC = timezone.utc
@@ -334,16 +333,15 @@ def test_past_booking_not_reminded(
     bot_mock.send_message.assert_not_called()
 
 
-# --- 2.4 Текст форматируется в TZ клиента ----------------------------------
+# --- 2.4 Текст форматируется в Europe/Moscow -------------------------------
 
 
-def test_reminder_text_in_client_timezone(
+def test_reminder_text_in_moscow_timezone(
     config: Config, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Текст форматируется в TZ клиента (не UTC)."""
+    """Текст форматируется в Europe/Moscow (не UTC), без профиля клиента."""
     from app.services.reminder_service import ReminderService
     from app.services.booking_service import BookingService
-    from app.services.client_service import ClientService
 
     now = datetime(2026, 7, 9, 6, 55, tzinfo=_UTC)
     booking_start = datetime(2026, 7, 9, 7, 0, tzinfo=_UTC)  # 10:00 Moscow
@@ -352,24 +350,13 @@ def test_reminder_text_in_client_timezone(
     pool = _FakePool(active_bookings=[booking])
     booking_service = BookingService(config, pool)
 
-    # Подменяем client_service для возврата Client с нужной таймзоной
-    client_service = MagicMock(spec=ClientService)
-    mock_client = Client(
-        telegram_id=42,
-        timezone="Europe/Moscow",  # IANA-идентификатор как строка
-        created_at=NOW,
-    )
-    client_service.get.return_value = mock_client
-
     bot_mock = MagicMock()
     bot_mock.send_message.return_value = None
 
-    service = ReminderService(
-        booking_service, pool, bot_mock, config.timezone, client_service
-    )
+    service = ReminderService(booking_service, pool, bot_mock, config.timezone)
     service.send_pending(now=now)
 
-    # Проверяем, что время в сообщении в таймзоне клиента (10:00, не 07:00)
+    # Проверяем, что время в сообщении в Europe/Moscow (10:00, не 07:00)
     call_args = bot_mock.send_message.call_args
     message_text = call_args[0][1]
     assert "10:00" in message_text or "10:" in message_text

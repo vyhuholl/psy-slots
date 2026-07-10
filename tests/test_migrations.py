@@ -75,23 +75,20 @@ def test_run_migrations_creates_bookings_idempotently() -> None:
     assert len(executed) == 2 * len(MIGRATIONS)
 
 
-def test_clients_table_is_migrated() -> None:
+def test_clients_table_is_not_migrated() -> None:
+    # Профиля клиента больше нет: таймзона фиксирована (Europe/Moscow),
+    # имена берутся из Telegram на лету — таблица clients не создаётся.
     joined = "\n".join(MIGRATIONS)
-    # Профиль клиента: telegram_id (PK), IANA-таймзона, created_at.
-    assert "clients" in joined
-    assert "telegram_id" in joined
-    assert "timezone" in joined
-    assert "created_at" in joined
-    # Идемпотентность: повторный прогон миграций безопасен.
-    assert all("IF NOT EXISTS" in stmt for stmt in MIGRATIONS)
+    assert "CREATE TABLE IF NOT EXISTS clients" not in joined
 
 
 def test_obsolete_tables_are_not_migrated() -> None:
     # Психолог один, интервалы — из окружения: таблиц специалистов и
-    # недельного расписания больше нет в схеме.
+    # недельного расписания больше нет в схеме. Профиля клиента тоже нет.
     joined = "\n".join(MIGRATIONS)
     assert "specialists" not in joined
     assert "availability_intervals" not in joined
+    assert "CREATE TABLE IF NOT EXISTS clients" not in joined
 
 
 def test_migration_not_invoked_on_webhook_path(

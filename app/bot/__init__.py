@@ -17,7 +17,6 @@ from app.bot.handlers.client import build_client_router
 from app.bot.handlers.admin import build_admin_router
 from app.config import Config, load_config
 from app.services.booking_service import BookingService
-from app.services.client_service import ClientService
 from app.services.slot_service import SlotService
 
 
@@ -30,7 +29,6 @@ def create_bot(config: Config | None = None) -> Bot:
 def create_dispatcher(
     *,
     config: Config | None = None,
-    client_service: ClientService | None = None,
     slot_service: SlotService | None = None,
     booking_service: BookingService | None = None,
 ) -> Dispatcher:
@@ -46,7 +44,6 @@ def create_dispatcher(
     dispatcher.include_router(build_admin_router())
     deps: dict[str, object] = {
         "config": config,
-        "client_service": client_service,
         "slot_service": slot_service,
         "booking_service": booking_service,
     }

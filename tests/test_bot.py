@@ -52,18 +52,15 @@ def test_create_dispatcher_injects_services_as_workflow_data(
     env: None,
 ) -> None:
     config = load_config()
-    client_service = MagicMock()
     slot_service = MagicMock()
     booking_service = MagicMock()
 
     dispatcher = create_dispatcher(
         config=config,
-        client_service=client_service,
         slot_service=slot_service,
         booking_service=booking_service,
     )
 
     assert dispatcher.workflow_data["config"] is config
-    assert dispatcher.workflow_data["client_service"] is client_service
     assert dispatcher.workflow_data["slot_service"] is slot_service
     assert dispatcher.workflow_data["booking_service"] is booking_service

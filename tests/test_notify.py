@@ -23,7 +23,6 @@ def env(monkeypatch: pytest.MonkeyPatch) -> None:
         TEST_AVAILABILITY_INTERVALS,
         TEST_BOOKING_UNAVAILABLE_MESSAGE,
         TEST_BOT_TOKEN,
-        TEST_TIMEZONE,
         TEST_WEBHOOK_SECRET,
         TEST_WELCOME_MESSAGE,
         TEST_YDB_DATABASE,
@@ -36,7 +35,6 @@ def env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("YDB_DATABASE", TEST_YDB_DATABASE)
     monkeypatch.setenv("ADMIN_TELEGRAM_ID", TEST_ADMIN_TELEGRAM_ID)
     monkeypatch.setenv("AVAILABILITY_INTERVALS", TEST_AVAILABILITY_INTERVALS)
-    monkeypatch.setenv("TIMEZONE", TEST_TIMEZONE)
     monkeypatch.setenv("WELCOME_MESSAGE", TEST_WELCOME_MESSAGE)
     monkeypatch.setenv(
         "BOOKING_UNAVAILABLE_MESSAGE", TEST_BOOKING_UNAVAILABLE_MESSAGE
@@ -112,7 +110,6 @@ def test_notify_initializes_warm_bot_once(env: None) -> None:
     with (
         patch("app.notify.get_pool"),
         patch("app.notify.BookingService"),
-        patch("app.notify.ClientService"),
         patch("app.notify.ReminderService", return_value=mock_service),
     ):
         notify(now=now)

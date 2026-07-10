@@ -48,7 +48,6 @@ def test_load_config_reads_all_variables(env: None) -> None:
         "YDB_DATABASE",
         "ADMIN_TELEGRAM_ID",
         "AVAILABILITY_INTERVALS",
-        "TIMEZONE",
         "WELCOME_MESSAGE",
         "BOOKING_UNAVAILABLE_MESSAGE",
     ],
@@ -142,13 +141,14 @@ def test_availability_invalid_raises(
 # --- Таймзона -------------------------------------------------------------
 
 
-def test_timezone_invalid_raises(
+def test_timezone_is_fixed_moscow_without_env(
     env: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("TIMEZONE", "Not/AZone")
+    # TIMEZONE не читается из окружения — таймзона фиксирована как Europe/Moscow.
+    monkeypatch.delenv("TIMEZONE", raising=False)
+    monkeypatch.setenv("TIMEZONE", "Not/AZone")  # игнорируется
 
-    with pytest.raises(ConfigError):
-        load_config()
+    assert load_config().timezone == ZoneInfo("Europe/Moscow")
 
 
 # --- Идентификатор администратора -----------------------------------------

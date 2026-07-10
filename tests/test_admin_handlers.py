@@ -1,7 +1,7 @@
 """Тесты админ-хендлеров (авторизация, просмотр, отмена).
 
-Тесты TDD: сначала падающие тесты, затем реализация. Хендлеры тонкие —
-проверяют только интеграцию с сервисами и форматирование ответа.
+Хендлеры тонкие — проверяют только интеграцию с сервисами и форматирование
+ответа. Имена клиентов резолвятся через ``bot.get_chat`` (замокан).
 """
 
 from __future__ import annotations
@@ -54,10 +54,15 @@ def _booking(start: datetime = START, client_id: int = CLIENT_ID) -> Booking:
     )
 
 
-# --- 1.1 Авторизация --------------------------------------------------------
-
-# Этот тест падает, т.к. хендлер админ-команд ещё не реализован.
-# После реализации 1.2 он станет зелёным (1.3).
+def _bot_without_names() -> Any:
+    """Bot, у которого get_chat не даёт username → имя падает до telegram_id."""
+    bot = AsyncMock()
+    bot.get_chat = AsyncMock(
+        return_value=SimpleNamespace(
+            first_name=None, last_name=None, username=None
+        )
+    )
+    return bot
 
 
 @pytest.fixture
@@ -65,15 +70,15 @@ def config(env: None) -> Config:
     return load_config()
 
 
+# --- Авторизация ------------------------------------------------------------
+
+
 async def test_admin_command_granted_to_admin(config: Config) -> None:
     """Администратор (id = ADMIN_TELEGRAM_ID) получает доступ к админ-меню."""
-    bot = AsyncMock()
+    bot = _bot_without_names()
     booking_service = MagicMock()
-    # Сервис замокан — проверяем только авторизацию, не логику списка.
     booking_service.list_active.return_value = []
 
-    # Импорт после создания mocks для avoidance of circular imports
-    # Хендлер будет реализован в 1.2
     from app.bot.handlers.admin import handle_admin_list
 
     await handle_admin_list(
@@ -83,13 +88,12 @@ async def test_admin_command_granted_to_admin(config: Config) -> None:
         booking_service=booking_service,
     )
 
-    # Админ видит ответ (список броней или сообщение об отсутствии)
     bot.send_message.assert_awaited_once()
 
 
 async def test_admin_command_denied_to_non_admin(config: Config) -> None:
     """Не-администратор получает отказ, управляющие действия не показываются."""
-    bot = AsyncMock()
+    bot = _bot_without_names()
     booking_service = MagicMock()
 
     from app.bot.handlers.admin import handle_admin_list
@@ -101,31 +105,23 @@ async def test_admin_command_denied_to_non_admin(config: Config) -> None:
         booking_service=booking_service,
     )
 
-    # Сервис не вызывался — доступ запрещён на входе
     booking_service.list_active.assert_not_called()
-    # Сообщение об отказе (а не список броней)
     text = bot.send_message.call_args.args[1]
     assert "прав" in text.lower() or "доступ" in text.lower()
 
 
-# --- 2.1 Просмотр броней ---------------------------------------------------
-
-# Эти тесты падают, т.к. хендлер просмотра ещё не реализован.
-# После реализации 2.2 они станут зелёными (2.3).
+# --- Просмотр броней --------------------------------------------------------
 
 
-async def test_admin_list_shows_active_bookings_in_config_tz(
+async def test_admin_list_shows_active_bookings_in_moscow_tz(
     config: Config,
 ) -> None:
-    """Администратор видит список активных броней во времени конфигурации."""
-    bot = AsyncMock()
+    """Список активных броней во времени Москвы с именем клиента на кнопке."""
+    bot = _bot_without_names()
     booking_service = MagicMock()
     booking_service.list_active.return_value = [
         _booking(start=START, client_id=CLIENT_ID),
-        _booking(
-            start=START + timedelta(minutes=20),
-            client_id=456,
-        ),
+        _booking(start=START + timedelta(minutes=20), client_id=456),
     ]
 
     from app.bot.handlers.admin import handle_admin_list
@@ -138,20 +134,49 @@ async def test_admin_list_shows_active_bookings_in_config_tz(
     )
 
     booking_service.list_active.assert_called_once()
-    # Проверяем клавиатуру - время в ней должно быть в таймзоне конфигурации
     markup = bot.send_message.call_args.kwargs.get("reply_markup")
     buttons = [btn for row in markup.inline_keyboard for btn in row]
     assert len(buttons) == 2
-    # Время в таймзоне конфигурации (Europe/Moscow = UTC+3): 07:00 UTC → 10:00 MSK
+    # Время в Europe/Moscow (UTC+3): 07:00 UTC → 10:00 MSK.
     assert "10:00" in buttons[0].text
-    assert str(CLIENT_ID) in buttons[0].text  # client id shown
+    # Без username имя падает до telegram_id.
+    assert str(CLIENT_ID) in buttons[0].text
+
+
+async def test_admin_list_resolves_human_name_via_get_chat(
+    config: Config,
+) -> None:
+    """Имя клиента человекочитаемо: Имя Фамилия (@username)."""
+    bot = AsyncMock()
+    bot.get_chat = AsyncMock(
+        return_value=SimpleNamespace(
+            first_name="Иван", last_name="Иванов", username="ivanov"
+        )
+    )
+    booking_service = MagicMock()
+    booking_service.list_active.return_value = [
+        _booking(start=START, client_id=CLIENT_ID)
+    ]
+
+    from app.bot.handlers.admin import handle_admin_list
+
+    await handle_admin_list(
+        _message(ADMIN_ID),
+        bot=bot,
+        config=config,
+        booking_service=booking_service,
+    )
+
+    markup = bot.send_message.call_args.kwargs.get("reply_markup")
+    buttons = [btn for row in markup.inline_keyboard for btn in row]
+    assert "Иван Иванов (@ivanov)" in buttons[0].text
 
 
 async def test_admin_list_empty_shows_message_without_error(
     config: Config,
 ) -> None:
     """Пустой список броней → сообщение без ошибки."""
-    bot = AsyncMock()
+    bot = _bot_without_names()
     booking_service = MagicMock()
     booking_service.list_active.return_value = []
 
@@ -169,10 +194,7 @@ async def test_admin_list_empty_shows_message_without_error(
     assert "нет" in text.lower() or "пуст" in text.lower()
 
 
-# --- 3.1-3.2 Отмена брони -----------------------------------------------------
-
-# Эти тесты падают, т.к. хендлеры отмены ещё не реализованы.
-# После реализации 3.3 они станут зелёными (3.4).
+# --- Отмена брони администратором -------------------------------------------
 
 
 async def test_admin_cancel_cancels_via_service_and_notifies_client(
@@ -182,15 +204,6 @@ async def test_admin_cancel_cancels_via_service_and_notifies_client(
     bot = AsyncMock()
     booking_service = MagicMock()
     booking_service.cancel.return_value = _booking().cancelled(NOW)
-    client_service = MagicMock()
-    # Для получения TZ клиента при отправке уведомления
-    from app.domain.client import Client
-
-    client_service.get.return_value = Client(
-        telegram_id=CLIENT_ID,
-        timezone="Europe/Moscow",
-        created_at=NOW,
-    )
 
     from app.bot.handlers.admin import handle_admin_cancel_confirm
 
@@ -200,12 +213,9 @@ async def test_admin_cancel_cancels_via_service_and_notifies_client(
         bot=bot,
         config=config,
         booking_service=booking_service,
-        client_service=client_service,
     )
 
-    # Отмена через сервис
     booking_service.cancel.assert_called_once_with(booking_id)
-    # Уведомление клиенту
     bot.send_message.assert_any_call(CLIENT_ID, ANY)
 
 
@@ -215,17 +225,7 @@ async def test_admin_cancel_already_cancelled_is_idempotent(
     """Отмена уже отменённой брони → без ошибки и без повторного эффекта."""
     bot = AsyncMock()
     booking_service = MagicMock()
-    # Сервис возвращает уже отменённую бронь
-    cancelled = _booking().cancelled(NOW)
-    booking_service.cancel.return_value = cancelled
-    client_service = MagicMock()
-    from app.domain.client import Client
-
-    client_service.get.return_value = Client(
-        telegram_id=CLIENT_ID,
-        timezone="Europe/Moscow",
-        created_at=NOW,
-    )
+    booking_service.cancel.return_value = _booking().cancelled(NOW)
 
     from app.bot.handlers.admin import handle_admin_cancel_confirm
 
@@ -234,10 +234,7 @@ async def test_admin_cancel_already_cancelled_is_idempotent(
         bot=bot,
         config=config,
         booking_service=booking_service,
-        client_service=client_service,
     )
 
-    # Сервис вызван (идемпотентно)
     booking_service.cancel.assert_called_once()
-    # Уведомление отправлено
     bot.send_message.assert_called()

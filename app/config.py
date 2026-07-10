@@ -1,17 +1,19 @@
 """Типизированная загрузка конфигурации из переменных окружения.
 
-Психолог один; все его параметры и тексты читаются только из окружения
-функции и никогда не хардкодятся: длительность слота, интервалы доступности
-(только время суток, без дня недели), таймзона, тексты сообщений и
-идентификатор администратора. Отсутствие обязательной переменной или
-недопустимое значение — явная ошибка на этапе инициализации.
+Психолог один; его параметры и тексты читаются только из окружения функции:
+длительность слота, интервалы доступности (только время суток, без дня недели),
+тексты сообщений и идентификатор администратора. Отсутствие обязательной
+переменной или недопустимое значение — явная ошибка на этапе инициализации.
+
+Таймзона не настраивается: она фиксирована как ``Europe/Moscow`` (в ней
+трактуются интервалы доступности и показывается время). Хранение в БД — в UTC.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Annotated
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo
 
 from pydantic import Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -20,6 +22,8 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 DEFAULT_SLOT_DURATION_MINUTES = 20
 # Минут в сутках — верхняя граница интервалов доступности.
 _MINUTES_PER_DAY = 24 * 60
+# Фиксированная таймзона показа и трактовки интервалов (не из окружения).
+MOSCOW_TZ = ZoneInfo("Europe/Moscow")
 
 
 class ConfigError(RuntimeError):
@@ -67,9 +71,13 @@ class Config(BaseSettings):
         default=DEFAULT_SLOT_DURATION_MINUTES, gt=0
     )
     availability_intervals: Annotated[tuple[TimeInterval, ...], NoDecode]
-    timezone: ZoneInfo
     welcome_message: str = Field(min_length=1)
     booking_unavailable_message: str = Field(min_length=1)
+
+    @property
+    def timezone(self) -> ZoneInfo:
+        """Фиксированная таймзона Europe/Moscow (показ и трактовка интервалов)."""
+        return MOSCOW_TZ
 
     @field_validator("availability_intervals", mode="before")
     @classmethod
@@ -95,18 +103,6 @@ class Config(BaseSettings):
             if current.start_minute < previous.end_minute:
                 raise ValueError("Availability intervals must not overlap")
         return tuple(ordered)
-
-    @field_validator("timezone", mode="before")
-    @classmethod
-    def _parse_timezone(cls, value: object) -> ZoneInfo:
-        if isinstance(value, ZoneInfo):
-            return value
-        if not isinstance(value, str) or not value:
-            raise ValueError("TIMEZONE must be a non-empty IANA identifier")
-        try:
-            return ZoneInfo(value)
-        except ZoneInfoNotFoundError, ValueError:
-            raise ValueError(f"Invalid IANA timezone: {value!r}") from None
 
 
 def load_config() -> Config:

@@ -1,14 +1,15 @@
 """Тонкие клиентские хендлеры потока записи (без доменной логики).
 
-Хендлеры только парсят апдейт, зовут сервисы (`client`, `slot`, `booking`) и
-строят ответ; вся доменная логика — в сервисном слое. Навигация без серверного
-состояния: контекст шага берётся из ``callback_data`` (см. `keyboards`).
+Хендлеры только парсят апдейт, зовут сервисы (`slot`, `booking`) и строят
+ответ; вся доменная логика — в сервисном слое. Навигация без серверного
+состояния: контекст шага берётся из ``callback_data`` (см. `keyboards`). Время
+везде показывается в Europe/Moscow (``config.timezone``).
 
-Зависимости (`config`, `client_service`, `slot_service`, `booking_service`,
-`bot`) внедряются aiogram из workflow-данных диспетчера по имени параметра,
-поэтому в тестах хендлеры вызываются напрямую с замоканными сервисами.
-Роутер собирается фабрикой :func:`build_client_router` — свежий экземпляр на
-каждый вызов, чтобы один роутер не привязывался к диспетчеру дважды.
+Зависимости (`config`, `slot_service`, `booking_service`, `bot`) внедряются
+aiogram из workflow-данных диспетчера по имени параметра, поэтому в тестах
+хендлеры вызываются напрямую с замоканными сервисами. Роутер собирается фабрикой
+:func:`build_client_router` — свежий экземпляр на каждый вызов, чтобы один роутер
+не привязывался к диспетчеру дважды.
 """
 
 from __future__ import annotations
@@ -25,40 +26,44 @@ from app.bot.keyboards import (
     ACTION_CANCEL_CONFIRM,
     ACTION_CONFIRM,
     ACTION_SLOT,
-    ACTION_TZ,
+    BUTTON_BOOK,
+    BUTTON_MY_BOOKINGS,
     bookings_keyboard,
     cancel_confirm_keyboard,
     confirm_keyboard,
+    main_menu_keyboard,
     slots_keyboard,
     start_from_value,
-    timezone_keyboard,
     unpack,
 )
+from app.bot.naming import resolve_client_name
 from app.config import Config
 from app.domain.booking import Booking, BookingError, SlotTaken
-from app.domain.client import Client
 from app.services.booking_service import BookingService
-from app.services.client_service import ClientService
 from app.services.slot_service import SlotService
 
 
 async def _send_today_slots(
     bot: Bot,
     chat_id: int,
-    client: Client,
     config: Config,
     slot_service: SlotService,
-) -> None:
-    """Показать сегодняшние свободные слоты или сообщение об их отсутствии."""
+) -> bool:
+    """Показать сегодняшние свободные слоты; вернуть ``True``, если они есть.
+
+    Если слотов нет — отправить сообщение о невозможности брони (из env) и
+    вернуть ``False``.
+    """
     slots = slot_service.list_free_slots()
     if not slots:
         await bot.send_message(chat_id, config.booking_unavailable_message)
-        return
+        return False
     await bot.send_message(
         chat_id,
-        "Свободное время на сегодня — выберите слот:",
-        reply_markup=slots_keyboard(slots, client.zoneinfo),
+        "Выберите слот на сегодня (по московскому времени):",
+        reply_markup=slots_keyboard(slots, config.timezone),
     )
+    return True
 
 
 def _active_booking_at(
@@ -71,17 +76,38 @@ def _active_booking_at(
     return None
 
 
-async def handle_start(message: Message, *, config: Config) -> None:
-    """``/start`` — приветствие с текстом из конфигурации."""
-    await message.answer(config.welcome_message)
+async def handle_start(
+    message: Message,
+    *,
+    bot: Bot,
+    config: Config,
+    slot_service: SlotService,
+) -> None:
+    """``/start`` — главное меню + слоты на сегодня либо сообщение о брони.
 
-
-async def handle_timezone(message: Message, *, bot: Bot) -> None:
-    """``/timezone`` — сменить таймзону (показать выбор зон)."""
+    Есть свободные слоты → приветствие (env) и список слотов. Нет → сообщение о
+    невозможности брони (env). Постоянное меню прикрепляется к первому ответу
+    (админ-кнопка — только администратору).
+    """
+    user = message.from_user
+    if user is None:
+        return
+    menu = main_menu_keyboard(user.id == config.admin_telegram_id)
+    slots = slot_service.list_free_slots()
+    if not slots:
+        await bot.send_message(
+            message.chat.id,
+            config.booking_unavailable_message,
+            reply_markup=menu,
+        )
+        return
+    await bot.send_message(
+        message.chat.id, config.welcome_message, reply_markup=menu
+    )
     await bot.send_message(
         message.chat.id,
-        "Выберите свою таймзону:",
-        reply_markup=timezone_keyboard(),
+        "Выберите слот на сегодня (по московскому времени):",
+        reply_markup=slots_keyboard(slots, config.timezone),
     )
 
 
@@ -90,41 +116,13 @@ async def handle_book(
     *,
     bot: Bot,
     config: Config,
-    client_service: ClientService,
     slot_service: SlotService,
 ) -> None:
-    """``/book`` — при известной TZ показать слоты, иначе запросить TZ."""
+    """``/book`` — показать свободные слоты на сегодня (или сообщение о брони)."""
     user = message.from_user
     if user is None:
         return
-    client = client_service.get(user.id)
-    if client is None:
-        await bot.send_message(
-            message.chat.id,
-            "Чтобы показать время в вашем часовом поясе, выберите таймзону:",
-            reply_markup=timezone_keyboard(),
-        )
-        return
-    await _send_today_slots(bot, message.chat.id, client, config, slot_service)
-
-
-async def handle_set_timezone(
-    callback: CallbackQuery,
-    *,
-    bot: Bot,
-    config: Config,
-    client_service: ClientService,
-    slot_service: SlotService,
-) -> None:
-    """``tz:<name>`` — сохранить таймзону клиента и продолжить к слотам."""
-    if callback.data is None:
-        return
-    _, name = unpack(callback.data)
-    client = client_service.set_timezone(callback.from_user.id, name)
-    await callback.answer()
-    await _send_today_slots(
-        bot, callback.from_user.id, client, config, slot_service
-    )
+    await _send_today_slots(bot, message.chat.id, config, slot_service)
 
 
 async def handle_slot(
@@ -132,20 +130,18 @@ async def handle_slot(
     *,
     bot: Bot,
     config: Config,
-    client_service: ClientService,
 ) -> None:
     """``slot:<epoch>`` — показать шаг подтверждения выбранного слота."""
     if callback.data is None:
         return
     _, value = unpack(callback.data)
     start = start_from_value(value)
-    client = client_service.get(callback.from_user.id)
-    tz = client.zoneinfo if client is not None else config.timezone
     end = start + timedelta(minutes=config.slot_duration_minutes)
     await callback.answer()
     await bot.send_message(
         callback.from_user.id,
-        f"Подтвердите запись на {format_slot_range(start, end, tz)}",
+        f"Подтвердите запись на "
+        f"{format_slot_range(start, end, config.timezone)}",
         reply_markup=confirm_keyboard(start),
     )
 
@@ -155,7 +151,6 @@ async def handle_confirm(
     *,
     bot: Bot,
     config: Config,
-    client_service: ClientService,
     booking_service: BookingService,
 ) -> None:
     """``confirm:<epoch>`` — создать бронь; занятый слот/повтор — дружелюбно."""
@@ -164,8 +159,7 @@ async def handle_confirm(
     _, value = unpack(callback.data)
     start = start_from_value(value)
     client_id = callback.from_user.id
-    client = client_service.get(client_id)
-    tz = client.zoneinfo if client is not None else config.timezone
+    tz = config.timezone
     await callback.answer()
     try:
         booking = booking_service.create(client_id=client_id, start=start)
@@ -201,15 +195,12 @@ async def handle_my_bookings(
     *,
     bot: Bot,
     config: Config,
-    client_service: ClientService,
     booking_service: BookingService,
 ) -> None:
-    """``/mybookings`` — активные брони клиента во времени клиента."""
+    """``/mybookings`` — активные брони клиента во времени Москвы."""
     user = message.from_user
     if user is None:
         return
-    client = client_service.get(user.id)
-    tz = client.zoneinfo if client is not None else config.timezone
     bookings = booking_service.list_active_for_client(user.id)
     if not bookings:
         await bot.send_message(message.chat.id, "У вас нет активных записей.")
@@ -218,7 +209,7 @@ async def handle_my_bookings(
     await bot.send_message(
         message.chat.id,
         "Ваши записи (нажмите, чтобы отменить):",
-        reply_markup=bookings_keyboard(ordered, tz),
+        reply_markup=bookings_keyboard(ordered, config.timezone),
     )
 
 
@@ -227,7 +218,6 @@ async def handle_cancel_request(
     *,
     bot: Bot,
     config: Config,
-    client_service: ClientService,
     booking_service: BookingService,
 ) -> None:
     """``cancel:<id>`` — шаг подтверждения отмены брони."""
@@ -241,12 +231,10 @@ async def handle_cancel_request(
             callback.from_user.id, "Запись не найдена или уже отменена."
         )
         return
-    client = client_service.get(callback.from_user.id)
-    tz = client.zoneinfo if client is not None else config.timezone
     await bot.send_message(
         callback.from_user.id,
         "Отменить запись на "
-        f"{format_slot_range(booking.start, booking.end, tz)}?",
+        f"{format_slot_range(booking.start, booking.end, config.timezone)}?",
         reply_markup=cancel_confirm_keyboard(booking_id),
     )
 
@@ -255,31 +243,42 @@ async def handle_cancel_confirm(
     callback: CallbackQuery,
     *,
     bot: Bot,
+    config: Config,
     booking_service: BookingService,
 ) -> None:
-    """``cancelok:<id>`` — выполнить отмену через доменный сервис."""
+    """``cancelok:<id>`` — отменить бронь и уведомить администратора."""
     if callback.data is None:
         return
     _, booking_id = unpack(callback.data)
-    booking_service.cancel(booking_id)
+    booking = booking_service.cancel(booking_id)
     await callback.answer()
     await bot.send_message(callback.from_user.id, "Запись отменена.")
 
+    # Уведомление администратору об отмене клиентом (сбой не откатывает отмену).
+    name = await resolve_client_name(bot, callback.from_user.id)
+    time_str = format_slot_range(booking.start, booking.end, config.timezone)
+    try:
+        await bot.send_message(
+            config.admin_telegram_id,
+            f"Пользователь {name} отменил запись на {time_str}.",
+        )
+    except Exception:
+        pass
+
 
 def build_client_router() -> Router:
-    """Собрать свежий роутер клиентского потока (команды + колбэки).
+    """Собрать свежий роутер клиентского потока (команды, меню, колбэки).
 
     Новый экземпляр на каждый вызов: один роутер нельзя привязать к диспетчеру
-    дважды, а фабрика диспетчера может вызываться многократно.
+    дважды, а фабрика диспетчера может вызываться многократно. Кнопки меню
+    маршрутизируются по тексту в те же хендлеры, что и команды.
     """
     router = Router(name="client")
     router.message.register(handle_start, CommandStart())
-    router.message.register(handle_timezone, Command("timezone"))
     router.message.register(handle_book, Command("book"))
+    router.message.register(handle_book, F.text == BUTTON_BOOK)
     router.message.register(handle_my_bookings, Command("mybookings"))
-    router.callback_query.register(
-        handle_set_timezone, F.data.startswith(f"{ACTION_TZ}:")
-    )
+    router.message.register(handle_my_bookings, F.text == BUTTON_MY_BOOKINGS)
     router.callback_query.register(
         handle_slot, F.data.startswith(f"{ACTION_SLOT}:")
     )

@@ -18,7 +18,6 @@ from aiogram import Bot
 
 from app.config import load_config
 from app.services.booking_service import BookingService
-from app.services.client_service import ClientService
 from app.services.reminder_service import ReminderService
 from app.ydb_client import get_pool
 
@@ -47,10 +46,9 @@ def _get_reminder_service() -> ReminderService:
         config = load_config()
         pool = get_pool()
         booking_service = BookingService(config, pool)
-        client_service = ClientService(pool)
         bot = _get_bot()
         _reminder_service = ReminderService(
-            booking_service, pool, bot, config.timezone, client_service
+            booking_service, pool, bot, config.timezone
         )
     return _reminder_service
 

@@ -28,7 +28,6 @@ def env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setenv("YDB_DATABASE", TEST_YDB_DATABASE)
     monkeypatch.setenv("ADMIN_TELEGRAM_ID", TEST_ADMIN_TELEGRAM_ID)
     monkeypatch.setenv("AVAILABILITY_INTERVALS", TEST_AVAILABILITY_INTERVALS)
-    monkeypatch.setenv("TIMEZONE", TEST_TIMEZONE)
     monkeypatch.setenv("WELCOME_MESSAGE", TEST_WELCOME_MESSAGE)
     monkeypatch.setenv(
         "BOOKING_UNAVAILABLE_MESSAGE", TEST_BOOKING_UNAVAILABLE_MESSAGE

@@ -2,7 +2,7 @@
 
 Отдельная функция по timer-триггеру YC, шлющая клиенту одно напоминание
 за фиксированные 5 минут до начала активной брони — идемпотентная
-(персистентный маркер по booking_id), с показом времени в таймзоне клиента.
+(персистентный маркер по booking_id), с показом времени в Europe/Moscow.
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ from aiogram import Bot
 
 from app.bot.formatting import format_slot_range
 from app.services.booking_service import BookingService
-from app.services.client_service import ClientService
 
 logger = getLogger(__name__)
 
@@ -71,14 +70,12 @@ class ReminderService:
         booking_service: BookingService,
         pool: ydb.QuerySessionPool,
         bot: Bot,
-        default_timezone: ZoneInfo,
-        client_service: ClientService | None = None,
+        display_timezone: ZoneInfo,
     ) -> None:
         self._booking_service = booking_service
         self._pool = pool
         self._bot = bot
-        self._default_timezone = default_timezone
-        self._client_service = client_service
+        self._display_timezone = display_timezone
 
     def send_pending(self, *, now: datetime | None = None) -> None:
         """Отправить напоминания по созревшим броням.
@@ -164,12 +161,10 @@ class ReminderService:
             pass
 
     def _send_reminder(self, booking: Any) -> None:
-        """Отправить напоминание клиенту."""
-        # Получаем таймзону клиента
-        tz = self._get_client_timezone(booking.client_id)
-
-        # Форматируем время в таймзоне клиента
-        time_str = format_slot_range(booking.start, booking.end, tz)
+        """Отправить напоминание клиенту (время в Europe/Moscow)."""
+        time_str = format_slot_range(
+            booking.start, booking.end, self._display_timezone
+        )
 
         # Текст напоминания
         text = f"Напоминание: вы записаны на {time_str}."
@@ -180,14 +175,6 @@ class ReminderService:
         result = self._bot.send_message(booking.client_id, text)
         if inspect.isawaitable(result):
             asyncio.run(result)
-
-    def _get_client_timezone(self, client_id: int) -> ZoneInfo:
-        """Получить таймзону клиента или дефолтную как ZoneInfo."""
-        if self._client_service is not None:
-            client = self._client_service.get(client_id)
-            if client is not None:
-                return ZoneInfo(client.timezone)
-        return self._default_timezone
 
 
 def _collect_rows(result_sets: Any) -> list[Any]:

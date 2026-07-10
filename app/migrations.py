@@ -38,18 +38,6 @@ CREATE TABLE IF NOT EXISTS bookings (
 );
 """
 
-# Профиль клиента: telegram_id (PK) совпадает с client_id брони и chat_id для
-# будущих напоминаний; timezone — IANA-идентификатор для показа времени в
-# таймзоне клиента; created_at фиксируется при первом контакте.
-_CREATE_CLIENTS = """
-CREATE TABLE IF NOT EXISTS clients (
-    telegram_id Int64,
-    timezone Utf8,
-    created_at Timestamp,
-    PRIMARY KEY (telegram_id)
-);
-"""
-
 # Маркеры отправленных напоминаний: booking_id (PK) гарантирует уникальность,
 # sent_at фиксирует момент отправки. Таблица обеспечивает идемпотентность —
 # одно напоминание на бронь, даже при повторных/перекрывающихся тиках.
@@ -63,11 +51,11 @@ CREATE TABLE IF NOT EXISTS sent_reminders (
 
 # Идемпотентные DDL-инструкции. Психолог один, а длительность и интервалы
 # доступности берутся из окружения (см. bot-config), поэтому таблиц
-# специалистов и недельного расписания в схеме нет. Прикладные таблицы
-# (sent_reminders) добавляют свои DDL сюда доменные changes.
+# специалистов и недельного расписания в схеме нет. Профиля клиента тоже нет:
+# таймзона фиксирована (Europe/Moscow), имена берутся из Telegram на лету —
+# таблица clients не создаётся. Прикладные таблицы добавляют свои DDL сюда.
 MIGRATIONS: tuple[str, ...] = (
     _CREATE_BOOKINGS,
-    _CREATE_CLIENTS,
     _CREATE_SENT_REMINDERS,
 )
 
